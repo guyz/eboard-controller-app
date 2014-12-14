@@ -1,21 +1,35 @@
 package edu.mit.media.eboardcontroller;
 
+import java.io.IOException;
+import java.io.OutputStream;
+import java.lang.reflect.Method;
+import java.util.UUID;
+
 import edu.mit.media.eboardcontroller.util.SystemUiHider;
 
 import android.animation.ArgbEvaluator;
 import android.animation.ValueAnimator;
 import android.annotation.TargetApi;
 import android.app.Activity;
+import android.bluetooth.BluetoothAdapter;
+import android.bluetooth.BluetoothDevice;
+import android.bluetooth.BluetoothSocket;
+import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.Point;
 import android.graphics.drawable.Drawable;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
+import android.support.v4.view.GestureDetectorCompat;
+import android.util.Log;
 import android.view.Display;
+import android.view.GestureDetector.OnGestureListener;
 import android.view.MotionEvent;
 import android.view.View;
 import android.widget.TextView;
+import android.widget.Toast;
+import android.view.GestureDetector;
 
 /**
  * An example full-screen activity that shows and hides the system UI (i.e.
@@ -23,7 +37,7 @@ import android.widget.TextView;
  * 
  * @see SystemUiHider
  */
-public class ThrottleActivity extends Activity {
+public class ThrottleActivity extends Activity implements GestureDetector.OnGestureListener, GestureDetector.OnDoubleTapListener {
 	/**
 	 * Whether or not the system UI should be auto-hidden after
 	 * {@link #AUTO_HIDE_DELAY_MILLIS} milliseconds.
@@ -54,7 +68,7 @@ public class ThrottleActivity extends Activity {
 	 * The instance of the {@link SystemUiHider} for this activity.
 	 */
 	private SystemUiHider mSystemUiHider;
-	
+	private GestureDetectorCompat mDetector;
 	private boolean isCruise = false;
 	private double speed = 0;
 	private double direction = 1; // either 1 or -1
@@ -68,7 +82,19 @@ public class ThrottleActivity extends Activity {
 	 * 		3 = backward direction
 	 */
 	private int state = 0; // Event state
-
+	
+	// BT related
+	private static final String TAG = "bluetooth1";
+	private BluetoothAdapter btAdapter = null;
+	private BluetoothSocket btSocket = null;
+	private OutputStream outStream = null;
+    
+	// SPP UUID service 
+	private static final UUID MY_UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB");
+  
+  	// MAC-address of Bluetooth module (you must edit this line)
+  	private static String address = "20:14:10:28:03:91";
+  
 	@Override
 	public boolean onTouchEvent(MotionEvent event) {
 //	    int x = (int)event.getX();
@@ -85,6 +111,7 @@ public class ThrottleActivity extends Activity {
 	        	// TODO: start decelerating ...
 	    }
 	    
+	    mDetector.onTouchEvent(event);
 	    return false;
 	}
 	
@@ -109,21 +136,45 @@ public class ThrottleActivity extends Activity {
     		// Set background
     		View mainlayoutcontent = findViewById(R.id.mainlayout_content);
     		
-//    		int dc = 255 - this.MAX_COLOR;
-//    		int cIntensity = 255 - (int) (this.speed * dc);
     		int cIntensity = 255 - (int) (Math.abs(this.speed) * 255);
     		int c = (255 << 8*3) + (cIntensity << 8*2) + (255 << 8) + cIntensity;
     		mainlayoutcontent.setBackgroundColor(c);
     		
-//    		mainlayoutcontent.setAlpha( (int) ( this.speed * 100 ) );
-    		
-//    		Drawable background = screencontentView.getBackground();
-//    		background.setAlpha( (int) ( this.speed * 100 ) );
-    		
-    		// TODO: BT
+    		// BT
+    		Log.d(TAG, "Sending spd=" + this.speed);
+    		sendData("spd=" + this.speed);
     	}
 		
 	}
+	
+	private void sendStop() {
+		this.speed = 0;
+		// Set text
+		TextView speedcontentView = (TextView) findViewById(R.id.speed_content);
+		speedcontentView.setText( String.format("%.1f", this.speed * 100.0 ) );
+		
+		// Set background
+		View mainlayoutcontent = findViewById(R.id.mainlayout_content);
+		
+		int cIntensity = 255 - (int) (Math.abs(this.speed) * 255);
+		int c = (255 << 8*3) + (cIntensity << 8*2) + (255 << 8) + cIntensity;
+		mainlayoutcontent.setBackgroundColor(c);
+		
+		// BT
+		Log.d(TAG, "Sending spd=" + this.speed);
+		sendData("spd=" + this.speed);
+	}
+	
+	private BluetoothSocket createBluetoothSocket(BluetoothDevice device) throws IOException {
+	      try {
+	    	  Method m=device.getClass().getMethod("createRfcommSocket", new Class[]{int.class});
+	    	  return (BluetoothSocket) m.invoke(device, 1);
+	      } catch (Exception e) {
+        	  Log.e(TAG, "Could not create Insecure RFComm Connection",e);
+          }
+	      
+	      return null;
+	  }
 	
 	@Override
 	protected void onCreate(Bundle savedInstanceState) {
@@ -136,10 +187,19 @@ public class ThrottleActivity extends Activity {
 		final View screencontentView = findViewById(R.id.screen_content);
 		final View mainlayoutcontent = findViewById(R.id.mainlayout_content);
 		
+		mDetector = new GestureDetectorCompat(this,(OnGestureListener) this);
+        // Set the gesture detector as the double tap
+        // listener.
+        mDetector.setOnDoubleTapListener(this);
+        
 		Display display = getWindowManager().getDefaultDisplay();
 		Point size = new Point();
 		display.getSize(size);
 		this.screenHeight = (double) size.y;
+		
+		// BT
+		btAdapter = BluetoothAdapter.getDefaultAdapter();
+	    checkBTState();
 		
 		//animate from your current color to red
 //		ValueAnimator anim = ValueAnimator.ofInt(Color.parseColor("#00FF00"), Color.parseColor("#FFFFFF"));
@@ -161,110 +221,174 @@ public class ThrottleActivity extends Activity {
 //		anim.setEvaluator(new ArgbEvaluator());
 		anim.setDuration(2000);
 		anim.start();
-		
-		// Set up an instance of SystemUiHider to control the system UI for
-		// this activity.
-//		mSystemUiHider = SystemUiHider.getInstance(this, contentView,
-//				HIDER_FLAGS);
-//		mSystemUiHider.setup();
-//		mSystemUiHider
-//				.setOnVisibilityChangeListener(new SystemUiHider.OnVisibilityChangeListener() {
-//					// Cached values.
-//					int mControlsHeight;
-//					int mShortAnimTime;
-//
-//					@Override
-//					@TargetApi(Build.VERSION_CODES.HONEYCOMB_MR2)
-//					public void onVisibilityChange(boolean visible) {
-//						if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.HONEYCOMB_MR2) {
-//							// If the ViewPropertyAnimator API is available
-//							// (Honeycomb MR2 and later), use it to animate the
-//							// in-layout UI controls at the bottom of the
-//							// screen.
-//							if (mControlsHeight == 0) {
-//								mControlsHeight = controlsView.getHeight();
-//							}
-//							if (mShortAnimTime == 0) {
-//								mShortAnimTime = getResources().getInteger(
-//										android.R.integer.config_shortAnimTime);
-//							}
-//							controlsView
-//									.animate()
-//									.translationY(visible ? 0 : mControlsHeight)
-//									.setDuration(mShortAnimTime);
-//						} else {
-//							// If the ViewPropertyAnimator APIs aren't
-//							// available, simply show or hide the in-layout UI
-//							// controls.
-//							controlsView.setVisibility(visible ? View.VISIBLE
-//									: View.GONE);
-//						}
-//
-//						if (visible && AUTO_HIDE) {
-//							// Schedule a hide().
-//							delayedHide(AUTO_HIDE_DELAY_MILLIS);
-//						}
-//					}
-//				});
-
-		// Set up the user interaction to manually show or hide the system UI.
-//		contentView.setOnClickListener(new View.OnClickListener() {
-//			@Override
-//			public void onClick(View view) {
-//				if (TOGGLE_ON_CLICK) {
-//					mSystemUiHider.toggle();
-//				} else {
-//					mSystemUiHider.show();
-//				}
-//			}
-//		});
-
-		// Upon interacting with UI controls, delay any scheduled hide()
-		// operations to prevent the jarring behavior of controls going away
-		// while interacting with the UI.
-//		findViewById(R.id.dummy_button).setOnTouchListener(
-//				mDelayHideTouchListener);
 	}
-
+	
+	  @Override
+	  public void onResume() {
+	    super.onResume();
+	  
+	    Log.d(TAG, "...onResume - try connect...");
+	    
+	    // Set up a pointer to the remote node using it's address.
+	    BluetoothDevice device = btAdapter.getRemoteDevice(address);
+	    
+	    // Two things are needed to make a connection:
+	    //   A MAC address, which we got above.
+	    //   A Service ID or UUID.  In this case we are using the
+	    //     UUID for SPP.
+	    
+	    try {
+	        btSocket = createBluetoothSocket(device);
+	    } catch (IOException e1) {
+	        errorExit("Fatal Error", "In onResume() and socket create failed: " + e1.getMessage() + ".");
+	    }
+	    
+	    if (btSocket == null) {
+	    	errorExit("Fatal Error", "Can't create BT socket");
+	    	return;
+	    }
+	        
+	    // Discovery is resource intensive.  Make sure it isn't going on
+	    // when you attempt to connect and pass your message.
+	    btAdapter.cancelDiscovery();
+	    
+	    // Establish the connection.  This will block until it connects.
+	    Log.d(TAG, "...Connecting...");
+	    try {
+	      btSocket.connect();
+	      Log.d(TAG, "...Connection ok...");
+	    } catch (IOException e) {
+	      try {
+	        btSocket.close();
+	      } catch (IOException e2) {
+	        errorExit("Fatal Error", "In onResume() and unable to close socket during connection failure" + e2.getMessage() + ".");
+	      }
+	    }
+	      
+	    // Create a data stream so we can talk to server.
+	    Log.d(TAG, "...Create Socket...");
+	  
+	    try {
+	      outStream = btSocket.getOutputStream();
+	      
+	      // Ask to reset the connection
+	      sendData("rst");
+	    } catch (IOException e) {
+	      errorExit("Fatal Error", "In onResume() and output stream creation failed:" + e.getMessage() + ".");
+	    }
+	  }
+	  
+	  @Override
+	  public void onPause() {
+	    super.onPause();
+	  
+	    Log.d(TAG, "...In onPause()...");
+	  
+	    if (outStream != null) {
+	      try {
+	        outStream.flush();
+	      } catch (IOException e) {
+	        errorExit("Fatal Error", "In onPause() and failed to flush output stream: " + e.getMessage() + ".");
+	      }
+	    }
+	  
+	    try     {
+	      btSocket.close();
+	    } catch (IOException e2) {
+	      errorExit("Fatal Error", "In onPause() and failed to close socket." + e2.getMessage() + ".");
+	    }
+	  }
+	    
+	  private void checkBTState() {
+	    // Check for Bluetooth support and then check to make sure it is turned on
+	    // Emulator doesn't support Bluetooth and will return null
+	    if(btAdapter==null) { 
+	      errorExit("Fatal Error", "Bluetooth not support");
+	    } else {
+	      if (btAdapter.isEnabled()) {
+	        Log.d(TAG, "...Bluetooth ON...");
+	      } else {
+	        //Prompt user to turn on Bluetooth
+	        Intent enableBtIntent = new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE);
+	        startActivityForResult(enableBtIntent, 1);
+	      }
+	    }
+	  }
+	  
+	  private void errorExit(String title, String message){
+	    Toast.makeText(getBaseContext(), title + " - " + message, Toast.LENGTH_LONG).show();
+	  }
+	  
+	  private void sendData(String message) {
+	    byte[] msgBuffer = message.getBytes();
+	  
+	    Log.d(TAG, "...Send data: " + message + "...");
+	  
+	    try {
+	      outStream.write(msgBuffer);
+	    } catch (IOException e) {
+	      String msg = "In onResume() and an exception occurred during write: " + e.getMessage();
+	      if (address.equals("00:00:00:00:00:00")) 
+	        msg = msg + ".\n\nUpdate your server address from 00:00:00:00:00:00 to the correct address on line 35 in the java code";
+	        msg = msg +  ".\n\nCheck that the SPP UUID: " + MY_UUID.toString() + " exists on server.\n\n";
+	        
+	        errorExit("Fatal Error", msg);       
+	    }
+	  }
+	
 	@Override
-	protected void onPostCreate(Bundle savedInstanceState) {
-		super.onPostCreate(savedInstanceState);
-
-		// Trigger the initial hide() shortly after the activity has been
-		// created, to briefly hint to the user that UI controls
-		// are available.
-//		delayedHide(100);
+	public boolean onDown(MotionEvent event) { 
+	    Log.d(TAG,"onDown: " + event.toString()); 
+	    return true;
 	}
-
-	/**
-	 * Touch listener to use for in-layout UI controls to delay hiding the
-	 * system UI. This is to prevent the jarring behavior of controls going away
-	 * while interacting with activity UI.
-	 */
-//	View.OnTouchListener mDelayHideTouchListener = new View.OnTouchListener() {
-//		@Override
-//		public boolean onTouch(View view, MotionEvent motionEvent) {
-//			if (AUTO_HIDE) {
-//				delayedHide(AUTO_HIDE_DELAY_MILLIS);
-//			}
-//			return false;
-//		}
-//	};
-
-//	Handler mHideHandler = new Handler();
-//	Runnable mHideRunnable = new Runnable() {
-//		@Override
-//		public void run() {
-//			mSystemUiHider.hide();
-//		}
-//	};
-
-	/**
-	 * Schedules a call to hide() in [delay] milliseconds, canceling any
-	 * previously scheduled calls.
-	 */
-//	private void delayedHide(int delayMillis) {
-//		mHideHandler.removeCallbacks(mHideRunnable);
-//		mHideHandler.postDelayed(mHideRunnable, delayMillis);
-//	}
+	
+	@Override
+	public boolean onFling(MotionEvent event1, MotionEvent event2, 
+	        float velocityX, float velocityY) {
+	    Log.d(TAG, "onFling: " + event1.toString()+event2.toString());
+	    return true;
+	}
+	
+	@Override
+	public void onLongPress(MotionEvent event) {
+	    Log.d(TAG, "onLongPress: " + event.toString()); 
+	}
+	
+	@Override
+	public boolean onScroll(MotionEvent e1, MotionEvent e2, float distanceX,
+	        float distanceY) {
+//	    Log.d(TAG, "onScroll: " + e1.toString()+e2.toString());
+	    return true;
+	}
+	
+	@Override
+	public void onShowPress(MotionEvent event) {
+	    Log.d(TAG, "onShowPress: " + event.toString());
+	}
+	
+	@Override
+	public boolean onSingleTapUp(MotionEvent event) {
+//	    Log.d(TAG, "onSingleTapUp: " + event.toString());
+	    return true;
+	}
+	
+	@Override
+	public boolean onDoubleTap(MotionEvent event) {
+//	    Log.d(TAG, "onDoubleTap: " + event.toString());
+		sendStop();
+	    return true;
+	}
+	
+	@Override
+	public boolean onDoubleTapEvent(MotionEvent event) {
+//	    Log.d(TAG, "onDoubleTapEvent: " + event.toString());
+	    return true;
+	}
+	
+	@Override
+	public boolean onSingleTapConfirmed(MotionEvent event) {
+//	    Log.d(TAG, "onSingleTapConfirmed: " + event.toString());
+	    return true;
+	}
+	    
 }
